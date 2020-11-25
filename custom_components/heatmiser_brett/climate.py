@@ -164,15 +164,6 @@ class HeatmiserV3Thermostat(ClimateEntity):
         else:                     # assume floor sensor
             index = 30   
         return (self.dcb[index]["value"] * 256 + self.dcb[index +1]["value"])/10
-    
-    @property
-    def current_temperature_old(self):
-        """Return the current temperature."""
-        return (
-            (self.dcb[31]["value"] / 10)
-            if (int(self.dcb[13]["value"]) > 1)
-            else (self.dcb[33]["value"]/10)
-        )
 
     @property
     def target_temperature(self):
