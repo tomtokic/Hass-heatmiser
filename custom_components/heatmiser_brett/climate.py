@@ -153,14 +153,19 @@ class HeatmiserV3Thermostat(ClimateEntity):
         Need to be a subset of HVAC_MODES.
         """
         return []
-
+    
     @property
     def current_temperature(self):
-        """Return the current temperature."""
-        self._temp = self.dcb[31]["value"] if (int(self.dcb[13]["value"]) > 1) else (self.dcb[33]["value"])
-        self._temp = (self._temp/10) if (int(self._temp) % 10 == 0) else ((self._temp+256)/10) 
-        return math.ceil(self._temp)
-
+        """Return the current temperature depending on sensor select"""
+        senselect = self.dcb[13]["value"]
+        if senselect in [0,3]:    # Built In sensor
+            index = 32
+        elif senselect in [1,4]:  # remote air sensor
+            index = 28
+        else:                     # assume floor sensor
+            index = 30   
+        return (self.dcb[index]["value"] * 256 + self.dcb[index +1]["value"])/10
+    
     @property
     def current_temperature_old(self):
         """Return the current temperature."""
