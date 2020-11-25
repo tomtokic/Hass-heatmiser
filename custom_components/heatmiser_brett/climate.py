@@ -1,5 +1,4 @@
 """Support for the PRT Heatmiser themostats using the V3 protocol."""
-import math
 import logging
 from typing import List
 
