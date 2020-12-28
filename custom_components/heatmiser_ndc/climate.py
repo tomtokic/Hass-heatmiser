@@ -1,8 +1,10 @@
 """Support for the PRT Heatmiser themostats using the V3 protocol."""
+""" Dec 2020 NDC version"""
+
 import logging
 from typing import List
 
-from heatmiserV3 import connection, heatmiser
+from . import connection, heatmiser
 import voluptuous as vol
 
 from homeassistant.components.climate import PLATFORM_SCHEMA, ClimateEntity
@@ -26,7 +28,7 @@ import homeassistant.helpers.config_validation as cv
 
 _LOGGER = logging.getLogger(__name__)
 
-DOMAIN = "heatmiser_brett"
+DOMAIN = "heatmiser_ndc"
 CONF_THERMOSTATS = "tstats"
 
 TSTAT_SCHEMA = vol.Schema(
@@ -54,7 +56,7 @@ CONFIG_SCHEMA = vol.Schema({DOMAIN: COMPONENT_SCHEMA}, extra=vol.ALLOW_EXTRA)
 
 def setup_platform(hass, config, add_entities, discovery_info=None):
     """Set up the heatmiser thermostat."""
-
+    _LOGGER.debug("Setting up platform")
     heatmiser_v3_thermostat = heatmiser.HeatmiserThermostat
 
     host = config[CONF_HOST]
@@ -78,6 +80,7 @@ class HeatmiserV3Thermostat(ClimateEntity):
 
     def __init__(self, therm, device, uh1):
         """Initialize the thermostat."""
+        _LOGGER.debug(f'Initialising thermostat {device}')
         self.therm = therm(device[CONF_ID], "prt", uh1)
         self.uh1 = uh1
         self._name = device[CONF_NAME]
@@ -90,32 +93,37 @@ class HeatmiserV3Thermostat(ClimateEntity):
 
     @property
     def supported_features(self):
-        """Return the list of supported features."""
+        _LOGGER.debug(f'supported features returning {SUPPORT_TARGET_TEMPERATURE}')
         return SUPPORT_TARGET_TEMPERATURE
 
     @property
     def name(self):
-        """Return the name of the thermostat, if any."""
+        _LOGGER.debug(f'name returning {self._name}')
         return self._name
 
     @property
     def temperature_unit(self):
-        """Return the unit of measurement which this thermostat uses."""
-        return TEMP_CELSIUS if (int(self.dcb[5]["value"]) == 0) else TEMP_FAHRENHEIT
+        value = TEMP_CELSIUS if (int(self.dcb[5]["value"]) == 0) else TEMP_FAHRENHEIT
+        _LOGGER.debug(f'temperature unit returning {value}')
+        return value
 
     @property
     def hvac_mode(self) -> str:
         """Return hvac operation ie. heat, cool mode.
         Need to be one of HVAC_MODE_*.
         """
+        
         if (int(self.dcb[23]["value"]) == 1):
-            return HVAC_MODE_OFF
+            value = HVAC_MODE_OFF
         elif (int(self.dcb[35]["value"]) == 0):
-            return HVAC_MODE_AUTO
+            value = HVAC_MODE_AUTO
         else:
-            return HVAC_MODE_HEAT
+            value = HVAC_MODE_HEAT
+        _LOGGER.debug(f'hvac mode returning {value}')
+        return value
 
     def set_hvac_mode(self, hvac_mode):
+        _LOGGER.debug(f'set hvac mode to {hvac_mode}')
         if hvac_mode == HVAC_MODE_OFF:
             self.therm.set_frost_protect_mode(1)
         else:
@@ -123,62 +131,77 @@ class HeatmiserV3Thermostat(ClimateEntity):
 
     def turn_off(self):
         """Turn. off the zone."""
+        _LOGGER.debug(f'turn off called')
         self.therm.set_frost_protect_temp(7)
         self.set_hvac_mode(HVAC_MODE_OFF)
 
     def turn_on(self):
         """Turn. on the zone."""
+        _LOGGER.debug(f'turn off called')
         self.set_hvac_mode(HVAC_MODE_AUTO)
 
     @property
     def target_temperature_step(self):
         """Return the supported step of target temperature."""
+        _LOGGER.debug(f'target temp step returning {PRECISION_WHOLE}')
         return PRECISION_WHOLE
 
     @property
     def min_temp(self):
         """Return the minimum temperature."""
+        _LOGGER.debug(f'min temp returning 5')
         return 5
 
     @property
     def max_temp(self):
         """Return the maximum temperature."""
+        _LOGGER.debug(f'max temp returning 35')
         return 35
 
     @property
     def hvac_modes(self) -> List[str]:
         """Return the list of available hvac operation modes.
-
-        Need to be a subset of HVAC_MODES.
+           Need to be a subset of HVAC_MODES.
         """
+        _LOGGER.debug(f'hvac modes called')
         return []
-    
+
     @property
     def current_temperature(self):
         """Return the current temperature depending on sensor select"""
         senselect = self.dcb[13]["value"]
         if senselect in [0,3]:    # Built In sensor
             index = 32
-        elif senselect in [1,4]:  # remote air sensor
+        elif senselect in [1,4]:    # remote  air sensor
             index = 28
-        else:                     # assume floor sensor
-            index = 30   
-        return (self.dcb[index]["value"] * 256 + self.dcb[index +1]["value"])/10
+        else:
+            index = 30    # assume floor sensor
+
+        temperature = (self.dcb[index]["value"] * 256 + self.dcb[index +1]["value"])/10
+        _LOGGER.debug(f'Current temp returned {temperature}')
+        return (temperature)
 
     @property
     def target_temperature(self):
-        """Return the temperature we try to reach."""
-        return self.therm.get_target_temp()
+        _LOGGER.debug(f'Get target temp')
+        temperature = self.therm.get_target_temp()
+        _LOGGER.debug(f'Target temp returned {temperature}')
+        return temperature
 
     def set_temperature(self, **kwargs):
         """Set new target temperature."""
         temperature = kwargs.get(ATTR_TEMPERATURE)
+        _LOGGER.debug(f'Set target temp: {temperature}')
         self._target_temperature = int(temperature)
         self.therm.set_target_temp(self._target_temperature)
+        
 
     def update(self):
         """Get the latest data."""
+        _LOGGER.debug(f'**** Update started')
         self.dcb = self.therm.read_dcb()
         self._current_temperature = int(self.current_temperature)
         self._target_temperature = int(self.target_temperature)
         self._hvac_mode = self.hvac_mode
+        _LOGGER.debug(f'**** Update done- current T: {self._current_temperature}, target T: {self._target_temperature}, hvac mode: {self._hvac_mode}')
+       

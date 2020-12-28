@@ -1,25 +1,23 @@
 # HA-heatmiser-component
-Home Assistant Component for Heatmiser PRT-N Stats
+Home Assistant Component (custom) for Heatmiser PRT-N Stats
 
 Upload this to `config/custom_components` folder and then see the example config to add to the configuration.yaml:
 
 ```
- - platform: heatmiser_brett
-    host: 192.168.1.81
-    scan_interval: 30
-    port: 9999
+ climate:
+  - platform: heatmiser_ndc
+    host: 192.168.0.19
+    port: 23
+    scan_interval: 20
     tstats:
       - id: 1
-        name: Living Room
-      - id: 2
-        name: Hallway
-      - id: 3
-        name: Dining Room
-      - id: 4
-        name: Cinema Room
-      - id: 5
         name: Kitchen
-      - id: 6
-        name: Washroom
+      - id: 2
+        name: Guest Bath
+      - id: 3
+        name: Guest Bed
+      - id: 4
 
 ```
+
+This version has been derived from the original Heatmiser component and the HeatmiserV3 library
