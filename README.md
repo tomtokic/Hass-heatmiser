@@ -4,7 +4,8 @@ Home Assistant Component (custom) for Heatmiser PRT-N Stats
 Upload this custom compenent to your`config/custom_components` folder. Then add to your configuration.yaml as per example below
 
 Notes
-My own heatmiser system has 15 stats connected via a single 1 ATC_1000 RS485 adaptor
+
+My own heatmiser system has 15 stats connected via a single  ATC_1000 RS485 adaptor
 
 The timeout in constants.py  is currently set to 0.8 seconds, so it takes c12 seconds to update all stats. This works fine on my own system, but if you have lots of CRC errors reported in the log, then it may be worth increasing this a little to say 1 second or more.
 
