@@ -56,7 +56,7 @@ CONFIG_SCHEMA = vol.Schema({DOMAIN: COMPONENT_SCHEMA}, extra=vol.ALLOW_EXTRA)
 
 def setup_platform(hass, config, add_entities, discovery_info=None):
     """Set up the heatmiser thermostat."""
-    _LOGGER.debug("Setting up platform")
+    _LOGGER.info("Setting up platform")
     heatmiser_v3_thermostat = heatmiser.HeatmiserThermostat
 
     host = config[CONF_HOST]
@@ -66,21 +66,20 @@ def setup_platform(hass, config, add_entities, discovery_info=None):
 
     uh1_hub = connection.HeatmiserUH1(host, port)
 
-    add_entities(
-        [
-            HeatmiserV3Thermostat(heatmiser_v3_thermostat, thermostat, uh1_hub)
-            for thermostat in thermostats
-        ],
-        True,
-    )
-
+    # Add all entities - True in call requests update before adding
+    # necessary to setup the dcb fields
+    add_entities( [ HeatmiserV3Thermostat(heatmiser_v3_thermostat, thermostat, uh1_hub)
+            for thermostat in thermostats], True, )
+    
+    _LOGGER.info("Setup complete")
+    
 
 class HeatmiserV3Thermostat(ClimateEntity):
     """Representation of a HeatmiserV3 thermostat."""
 
     def __init__(self, therm, device, uh1):
         """Initialize the thermostat."""
-        _LOGGER.debug(f'Initialising thermostat {device}')
+       
         self.therm = therm(device[CONF_ID], "prt", uh1)
         self.uh1 = uh1
         self._name = device[CONF_NAME]
@@ -90,6 +89,7 @@ class HeatmiserV3Thermostat(ClimateEntity):
         self.dcb = None
         self._hvac_mode = HVAC_MODE_OFF
         self._temperature_unit = None
+        _LOGGER.info(f'Initialised thermostat {self._name}')
 
     @property
     def supported_features(self):
@@ -130,14 +130,14 @@ class HeatmiserV3Thermostat(ClimateEntity):
             self.therm.set_frost_protect_mode(0)
 
     def turn_off(self):
-        """Turn. off the zone."""
+        """Turn off the zone"""
         _LOGGER.debug(f'turn off called')
         self.therm.set_frost_protect_temp(7)
         self.set_hvac_mode(HVAC_MODE_OFF)
 
     def turn_on(self):
-        """Turn. on the zone."""
-        _LOGGER.debug(f'turn off called')
+        """Turn on the zone"""
+        _LOGGER.debug(f'turn on called')
         self.set_hvac_mode(HVAC_MODE_AUTO)
 
     @property
@@ -192,16 +192,25 @@ class HeatmiserV3Thermostat(ClimateEntity):
         """Set new target temperature."""
         temperature = kwargs.get(ATTR_TEMPERATURE)
         _LOGGER.debug(f'Set target temp: {temperature}')
-        self._target_temperature = int(temperature)
-        self.therm.set_target_temp(self._target_temperature)
         
+        try:
+            self._target_temperature = int(temperature)
+            self.therm.set_target_temp(self._target_temperature)
+        except ValueError as err:
+            _LOGGER.error (f'Error - Set Temperature exception {err} for {self._name}')
+         
 
     def update(self):
         """Get the latest data."""
-        _LOGGER.debug(f'**** Update started')
-        self.dcb = self.therm.read_dcb()
+        _LOGGER.debug(f'Update started for {self._name}')
+        
+        try:
+            self.dcb = self.therm.read_dcb()
+        except ValueError as err:
+            _LOGGER.error (f'Error - Update exception {err} for {self._name}')
+        
         self._current_temperature = int(self.current_temperature)
         self._target_temperature = int(self.target_temperature)
         self._hvac_mode = self.hvac_mode
-        _LOGGER.debug(f'**** Update done- current T: {self._current_temperature}, target T: {self._target_temperature}, hvac mode: {self._hvac_mode}')
+        _LOGGER.debug(f'Update done- current T: {self._current_temperature}, target T: {self._target_temperature}, hvac mode: {self._hvac_mode}')
        

@@ -6,8 +6,7 @@ from . import heatmiser
 import asyncio
 import serial_asyncio
 
-logging.basicConfig(level=logging.INFO)
-
+_LOGGER = logging.getLogger(__name__)
 
 class HeatmiserUH1(object):
     """
@@ -16,12 +15,13 @@ class HeatmiserUH1(object):
     """
 
     def __init__(self, ipaddress, port):
+        _LOGGER.info(f'Initialising interface {ipaddress} : {port}')
         self.thermostats = {}
         self._serport = serial.serial_for_url("socket://" + ipaddress + ":" + port)
         # Ensures that the serial port has not
         # been left hanging around by a previous process.
         serport_response = self._serport.close()
-        logging.info("SerialPortResponse: %s", serport_response)
+        _LOGGER.debug(f'SerialPortResponse: {serport_response}')
         self._serport.baudrate = constants.COM_BAUD
         self._serport.bytesize = constants.COM_SIZE
         self._serport.parity = constants.COM_PARITY
@@ -32,26 +32,26 @@ class HeatmiserUH1(object):
 
     def _open(self):
         if not self.status:
-            logging.info("Opening serial port.")
+            _LOGGER.debug("Opening serial port.")
             self._serport.open()
             self.status = True
-            logging.info("Opened serial port OK")
+            _LOGGER.debug("Opened serial port OK")
             return True
         else:
-            logging.info("Attempting to access already open port")
+            _LOGGER.error("Attempting to access already open port")
             return False
 
     def reopen(self):
         if not self.status:
-            logging.info("Re-opening serial port.")
+            _LOGGER.debug("Re-opening serial port.")
             self._serport.open()
             self.status = True
             return self.status
         else:
-            logging.error("Cannot open serial port")
+            _LOGGER.error("Cannot open serial port")
 
     def __del__(self):
-        logging.info("Closing serial port.")
+        _LOGGER.debug("Closing serial port.")
         self._serport.close()
 
     def registerThermostat(self, thermostat):
@@ -62,12 +62,11 @@ class HeatmiserUH1(object):
                 raise ValueError("Key already present")
             else:
                 self.thermostats[thermostat.address] = thermostat
-                logging.info(f'Register Thermostat addr {thermostat.address}  ')
+                _LOGGER.debug(f'Register Thermostat addr {thermostat.address}  ')
         except ValueError:
             pass
         except Exception as err:
-            logging.info("You're not adding a HeatmiiserThermostat Object")
-            logging.info(err)
+            _LOGGER.error(f'Not a HeatmiiserThermostat Object {err}')
         return self._serport
 
     def listThermostats(self):
