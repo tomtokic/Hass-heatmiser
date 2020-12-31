@@ -1,6 +1,6 @@
 # NDC Dec 2020
 # Neil Trimboy 2011
-# Assume Python 2.7.x +
+
 #
 import sys
 import serial
@@ -30,8 +30,8 @@ class CRC16:
     ]
 
     def __init__(self):
-        self.high = constants.BYTEMASK
-        self.low = constants.BYTEMASK
+        self.high = 0xff
+        self.low = 0xff
 
     def extract_bits(self, val):
         """Extras the 4 bits, XORS the message data, and does table lookups."""
@@ -41,14 +41,14 @@ class CRC16:
         thisval = thisval ^ val
         # Shift the CRC Register left 4 bits
         self.high = (self.high << 4) | (self.low >> 4)
-        self.high = self.high & constants.BYTEMASK    # force char
+        self.high = self.high & 0xff    # force char
         self.low = self.low << 4
-        self.low = self.low & constants.BYTEMASK      # force char
+        self.low = self.low & 0xff      # force char
         # Do the table lookups and XOR the result into the CRC tables
         self.high = self.high ^ self.LookupHigh[thisval]
-        self.high = self.high & constants.BYTEMASK    # force char
+        self.high = self.high & 0xff    # force char
         self.low = self.low ^ self.LookupLow[thisval]
-        self.low = self.low & constants.BYTEMASK      # force char
+        self.low = self.low & 0xff      # force char
 
     def update(self, val):
         """Updates the CRC value using bitwise operations."""
@@ -76,170 +76,95 @@ class HeatmiserThermostat(object):
             _LOGGER.error("The YAML file is invalid: %s", exc)
         self.conn = uh1.registerThermostat(self)
         self.dcb = ""
-        # Is there a need to read stat at this point, slows down initialisation
-        # comment it out to see
+        
+        # No need to read stat at this point, slows down initialisation
         #self.read_dcb()
 
-    def _hm_form_message(
-            self,
-            thermostat_id,
-            protocol,
-            source,
-            function,
-            start,
-            payload
-    ):
+    def _hm_form_message(self, stat, source, function, start, payload):
         """Forms a message payload, excluding CRC"""
-        if protocol == constants.HMV3_ID:
-            start_low = (start & constants.BYTEMASK)
-            start_high = (start >> 8) & constants.BYTEMASK
-            if function == constants.FUNC_READ:
-                payload_length = 0
-                length_low = (constants.RW_LENGTH_ALL & constants.BYTEMASK)
-                length_high = (constants.RW_LENGTH_ALL >> 8) & constants.BYTEMASK
-            else:
-                payload_length = len(payload)
-                length_low = (payload_length & constants.BYTEMASK)
-                length_high = (payload_length >> 8) & constants.BYTEMASK
-            msg = [
-                thermostat_id,
-                10 + payload_length,
-                source,
-                function,
-                start_low,
-                start_high,
-                length_low,
-                length_high
-            ]
-            if function == constants.FUNC_WRITE:
-                msg = msg + payload
-                type(msg)
-            return msg
-        else:
-            assert 0, "Un-supported protocol found %s" % protocol
 
-    def _hm_form_message_crc(
-            self,
-            thermostat_id,
-            protocol,
+        start_low = (start & 0xff)
+        start_high = (start >> 8) & 0xff
+        if function == constants.FUNC_READ:
+            payload_length = 0
+            length_low = 0xff
+            length_high = 0xff
+        else:
+            payload_length = len(payload)
+            length_low = (payload_length & 0xff)
+            length_high = (payload_length >> 8) & 0xff
+        msg = [
+            stat,
+            10 + payload_length,
             source,
             function,
-            start,
-            payload
-    ):
+            start_low,
+            start_high,
+            length_low,
+            length_high
+        ]
+        if function == constants.FUNC_WRITE:
+            msg = msg + payload
+            type(msg)
+        return msg
+        
+
+    def _hm_form_message_crc(self, stat, source, function, start, payload):
         """Forms a message payload, including CRC"""
-        data = self._hm_form_message(
-            thermostat_id, protocol, source, function, start, payload)
+        data = self._hm_form_message(stat, source, function, start, payload)
         crc = CRC16()
         data = data + crc.run(data)
         return data
 
-    def _hm_verify_message_crc_uk(
-            self,
-            thermostat_id,
-            protocol,
-            source,
-            expectedFunction,
-            expectedLength,
-            datal
-    ):
+    def _hm_verify_message_crc_uk(self, stat, source, expectedFunction, datal):
         """Verifies message appears legal"""
         # expectedLength only used for read msgs as always 7 for write
+        # raises ValueError exception if message not valid
         
         _LOGGER.debug(f'Verifying message- source: {source}')
-        badresponse = 0
-        if protocol == constants.HMV3_ID:
-            checksum = datal[len(datal) - 2:]
-            rxmsg = datal[:len(datal) - 2]
-            crc = CRC16()   # Initialises the CRC
-            expectedchecksum = crc.run(rxmsg)
-            if expectedchecksum == checksum:
-                _LOGGER.debug("Correct CRC")
-            else:
-                _LOGGER.error("Bad CRC")
-                serror = "Bad CRC"
-                sys.stderr.write(serror)
-                badresponse += 1
-            dest_addr = datal[0]
-            frame_len_l = datal[1]
-            frame_len_h = datal[2]
-            frame_len = (frame_len_h << 8) | frame_len_l
-            source_addr = datal[3]
-            func_code = datal[4]
+        
+        checksum = datal[len(datal) - 2:]
+        rxmsg = datal[:len(datal) - 2]
+        crc = CRC16()   # Initialises the CRC
+        expectedchecksum = crc.run(rxmsg)
+        if expectedchecksum != checksum:
+            raise ValueError("Bad CRC")
 
-            if (dest_addr != 129 and dest_addr != 160):
-                _LOGGER.error("dest_addr is ILLEGAL")
-                serror = "Illegal Dest Addr: %s\n" % (dest_addr)
-                sys.stderr.write(serror)
-                badresponse += 1
+        dest_addr = datal[0]
+        frame_len_l = datal[1]
+        frame_len_h = datal[2]
+        frame_len = (frame_len_h << 8) | frame_len_l
+        source_addr = datal[3]
+        func_code = datal[4]
 
-            if dest_addr != thermostat_id:
-                _LOGGER.error("dest_addr is INCORRECT")
-                serror = "Incorrect Dest Addr: %s\n" % (dest_addr)
-                sys.stderr.write(serror)
-                badresponse += 1
+        if (dest_addr != 129 and dest_addr != 160):
+            raise ValueError("dest_addr is ILLEGAL")
 
-            if (source_addr < 1 or source_addr > 32):
-                _LOGGER.error("source_addr is ILLEGAL")
-                serror = "Illegal Src Addr: %s\n" % (source_addr)
-                sys.stderr.write(serror)
-                badresponse += 1
+        if dest_addr != stat:
+            raise ValueError("dest_addr is INCORRECT")
 
-            if source_addr != source:
-                _LOGGER.error("source addr is INCORRECT")
-                serror = "Incorrect Src Addr: %s\n" % (source_addr)
-                sys.stderr.write(serror)
-                badresponse += 1
+        if (source_addr < 1 or source_addr > 32):
+            raise ValueError("source_addr is ILLEGAL")
+        
+        if source_addr != source:
+            raise ValueError("source addr is INCORRECT")
 
-            if (
-                func_code != constants.FUNC_WRITE and
-                func_code != constants.FUNC_READ
-            ):
-                _LOGGER.error("Func Code is UNKNWON")
-                serror = "Unknown Func Code: %s\n" % (func_code)
-                sys.stderr.write(serror)
-                badresponse += 1
+        if func_code != constants.FUNC_WRITE and func_code != constants.FUNC_READ:
+            raise ValueError("Func Code is UNKNWON")
 
-            if func_code != expectedFunction:
-                _LOGGER.error("Func Code is UNEXPECTED")
-                serror = "Unexpected Func Code: %s\n" % (func_code)
-                sys.stderr.write(serror)
-                badresponse += 1
+        if func_code != expectedFunction:
+            raise ValueError("Func Code is UNEXPECTED")
 
-            if (
-                    func_code == constants.FUNC_WRITE and frame_len != 7
-            ):
-                # Reply to Write is always 7 long
-                _LOGGER.error("Write length is not 7")
-                serror = "Incorrect length: %s\n" % (frame_len)
-                sys.stderr.write(serror)
-                badresponse += 1
+        if func_code == constants.FUNC_WRITE and frame_len != 7:
+            raise ValueError("Unexpected Write length")
 
-            if len(datal) != frame_len:
-                _LOGGER.error("response length MISMATCHES header")
-                serror = "Mismatch length: %s %s\n" % (len(datal), frame_len)
-                sys.stderr.write(serror)
-                badresponse += 1
+        # when function is FUNC_READ length might vary
 
-            # if (func_code == constants.FUNC_READ and
-            #   expectedLength !=len(datal) ):
-            #   # Read response length is wrong
-            #   _LOGGER.error("response length
-            #    not EXPECTED value")
-            #   _LOGGER.error("Got %s when expecting %s",
-            #   len(datal), expectedLength)
-            #   _LOGGER.error("Data is:\n %s", datal)
-            #   s = "Incorrect length: %s\n" % (frame_len)
-            #   sys.stderr.write(s)
-            #   badresponse += 1
-
-            if (badresponse == 0):
-                return True
-            else:
-                return False
-
-        else:
-            assert 0, "Un-supported protocol found %s" % protocol
+        if len(datal) != frame_len:
+            raise ValueError("response length MISMATCHES header")
+    
+        # message appears OK
+        
 
     def _hm_send_msg(self, message):
         """This is the only interface to the serial connection."""
@@ -248,9 +173,8 @@ class HeatmiserThermostat(object):
             serial_message = message
             self.conn.write(serial_message)   # Write a string
         except serial.SerialTimeoutException:
-            _LOGGER.error("Serial timeout")
-            serror = "Write timeout error: \n"
-            sys.stderr.write(serror)
+            _LOGGER.error("Serial timeout on write")
+            
         # Now wait for reply
         byteread = self.conn.read(159)
         # NB max return is 75 in 5/2 mode or 159 in 7day mode
@@ -261,35 +185,21 @@ class HeatmiserThermostat(object):
     def _hm_send_address(self, thermostat_id, address, state, readwrite):
         
         _LOGGER.debug(f'Sending - therm id {thermostat_id} addr {address}, state {state}, R/W {readwrite}')
-        protocol = constants.HMV3_ID
-        if protocol == constants.HMV3_ID:
-            payload = [state]
-            msg = self._hm_form_message_crc(
-                thermostat_id,
-                protocol,
-                constants.RW_MASTER_ADDRESS,
-                readwrite,
-                address,
-                payload
-            )
-        else:
-            assert 0, "Un-supported protocol found %s" % protocol
+        
+        payload = [state]
+        msg = self._hm_form_message_crc(
+            thermostat_id,
+            129,
+            readwrite,
+            address,
+            payload
+        )
         string = bytes(msg)
-        datal = self._hm_send_msg(string)
-        pro = protocol
-        if readwrite == 1:
-            verification = self._hm_verify_message_crc_uk(
-                0x81, pro, thermostat_id, readwrite, 1, datal)
-            if verification is False:
-                _LOGGER.error(f'Verify failed (1) for Therm {thermostat_id}')
-            return datal
-        else:
-            verification = self._hm_verify_message_crc_uk(
-                0x81, pro, thermostat_id, readwrite, 75, datal)
-            if verification is False:
-                _LOGGER.error(f'Verify failed (75) for Therm {thermostat_id}')
-            return datal
-
+        datal = self._hm_send_msg(string)           
+        self._hm_verify_message_crc_uk(129, thermostat_id, readwrite, datal)
+                
+        return datal
+        
     def _hm_read_address(self):
         """Reads from the DCB and maps to yaml config file."""
         _LOGGER.debug(f'hm read_address {self.address}')
@@ -299,7 +209,6 @@ class HeatmiserThermostat(object):
         keydata = {}
         for i in lookup:
             try:
-                
                 kdata = lookup[i]
                 ddata = response[i + offset]
                 #special debug for stat no, target temp, and room temps
@@ -311,7 +220,7 @@ class HeatmiserThermostat(object):
                     'value': ddata
                 }
             except IndexError:
-                _LOGGER.error(f'Index error at {i}')
+                raise ValueError (f'Index error at {i}')
         
         return keydata
 
@@ -413,26 +322,20 @@ class HeatmiserThermostat(object):
     def set_frost_protect_temp(self, frost_temp):
         _LOGGER.debug(f'Set frost temp {frost_temp}')
         if 17 < frost_temp < 7:
-            _LOGGER.error("Atempt to set bad frost tempe %s ", frost_temp)
-            return False
-        else:
-            self._hm_send_address(self.address, 17, frost_temp, 1)
-            return True
+            raise ValueError(f'Attempt to set bad frost tempe {frost_temp}')
+        self._hm_send_address(self.address, 17, frost_temp, 1)
+        return True
 
     def set_target_temp(self, temperature):
         _LOGGER.debug(f'hm set target temp {temperature}')
         if 35 < temperature < 5:
-            _LOGGER.error(f'Attempt to set bad target temp {temperature}')
-            return False
-        else:
-            self._hm_send_address(self.address, 18, temperature, 1)
-            return True
+            raise ValueError (f'Attempt to set bad target temp {temperature}')
+        self._hm_send_address(self.address, 18, temperature, 1)
+        return True
 
     def set_floormax_temp(self, floor_max):
         _LOGGER.debug(f'hm set floormax temp {floor_max}')
         if 45 < floor_max < 20:
-            _LOGGER.error(f'Attempt to set bad floormax temp {floor_max}')
-            return False
-        else:
-            self._hm_send_address(self.address, 19, floor_max, 1)
-            return True
+            raise ValueError(f'Attempt to set bad floormax temp {floor_max}')
+        self._hm_send_address(self.address, 19, floor_max, 1)
+        return True
