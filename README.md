@@ -33,5 +33,3 @@ Example configuration.yaml
       - id: 4
 
 ```
-
-This version has been derived from the original Heatmiser component and the HeatmiserV3 library
