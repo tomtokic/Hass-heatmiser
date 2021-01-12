@@ -4,8 +4,7 @@
   "documentation": "https://www.home-assistant.io/components/heatmiser",
   "requirements": [
     "pyserial==3.5",
-    "pyserial-asyncio==0.5",
-    "pyyaml==5.3.1"
+    "pyserial-asyncio==0.5"
   ],
   "dependencies": [],
   "codeowners": []
