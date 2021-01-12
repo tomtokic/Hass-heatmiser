@@ -1,10 +1,16 @@
-"""Support for the PRT Heatmiser themostats using the V3 protocol."""
-""" Dec 2020 NDC version"""
+"""
+  Home Assistant component to access PRT Heatmiser themostats using the V3 protocol
+  via the heatmiser library
+"""
+
+# Dec 2020 NDC version
+# In this code, we will not access the dcb directly (as other versions have done)
+# We let the library decode and access the dcb fields
 
 import logging
 from typing import List
 
-from . import connection, heatmiser
+from . import heatmiser
 import voluptuous as vol
 
 from homeassistant.components.climate import PLATFORM_SCHEMA, ClimateEntity
@@ -24,15 +30,16 @@ from homeassistant.const import (
     TEMP_FAHRENHEIT,
     PRECISION_WHOLE,
 )
-import homeassistant.helpers.config_validation as cv
 
+import homeassistant.helpers.config_validation as cv
 _LOGGER = logging.getLogger(__name__)
 
 DOMAIN = "heatmiser_ndc"
 CONF_THERMOSTATS = "tstats"
 
 TSTAT_SCHEMA = vol.Schema(
-    {vol.Required(CONF_ID): vol.Range(1, 32), vol.Required(CONF_NAME): cv.string,}
+    {vol.Required(CONF_ID): vol.Range(1, 32),
+     vol.Required(CONF_NAME): cv.string, }
 )
 
 TSTATS_SCHEMA = vol.All(cv.ensure_list, [TSTAT_SCHEMA])
@@ -54,46 +61,44 @@ COMPONENT_SCHEMA = vol.Schema(
 )
 CONFIG_SCHEMA = vol.Schema({DOMAIN: COMPONENT_SCHEMA}, extra=vol.ALLOW_EXTRA)
 
+
 def setup_platform(hass, config, add_entities, discovery_info=None):
     """Set up the heatmiser thermostat."""
     _LOGGER.info("Setting up platform")
-    heatmiser_v3_thermostat = heatmiser.HeatmiserThermostat
+    statobject = heatmiser.HeatmiserStat
 
     host = config[CONF_HOST]
     port = str(config.get(CONF_PORT))
-
-    thermostats = config[CONF_THERMOSTATS]
-
-    uh1_hub = connection.HeatmiserUH1(host, port)
+    statlist = config[CONF_THERMOSTATS]
+    uh1_hub = heatmiser.HM_UH1(host, port)
 
     # Add all entities - True in call requests update before adding
     # necessary to setup the dcb fields
-    add_entities( [ HeatmiserV3Thermostat(heatmiser_v3_thermostat, thermostat, uh1_hub)
-            for thermostat in thermostats], True, )
-    
-    _LOGGER.info("Setup complete")
-    
+    add_entities([HMV3Stat(statobject, stat, uh1_hub)
+                  for stat in statlist], True, )
 
-class HeatmiserV3Thermostat(ClimateEntity):
+    _LOGGER.info("Platform setup complete")
+
+
+class HMV3Stat(ClimateEntity):
     """Representation of a HeatmiserV3 thermostat."""
+
+    # these functions are called by Hass code
+    # logging does not show any calls made to following:
+    #    turn_on, turn_off, set_hvac_mode
 
     def __init__(self, therm, device, uh1):
         """Initialize the thermostat."""
-       
+
         self.therm = therm(device[CONF_ID], "prt", uh1)
-        self.uh1 = uh1
         self._name = device[CONF_NAME]
-        self._current_temperature = None
-        self._target_temperature = None
-        self._id = device
-        self.dcb = None
-        self._hvac_mode = HVAC_MODE_OFF
-        self._temperature_unit = None
         _LOGGER.info(f'Initialised thermostat {self._name}')
+        _LOGGER.debug(f'Init uh1 = {uh1}')
 
     @property
     def supported_features(self):
-        _LOGGER.debug(f'supported features returning {SUPPORT_TARGET_TEMPERATURE}')
+        _LOGGER.debug(
+            f'supported features returning {SUPPORT_TARGET_TEMPERATURE}')
         return SUPPORT_TARGET_TEMPERATURE
 
     @property
@@ -103,19 +108,21 @@ class HeatmiserV3Thermostat(ClimateEntity):
 
     @property
     def temperature_unit(self):
-        value = TEMP_CELSIUS if (int(self.dcb[5]["value"]) == 0) else TEMP_FAHRENHEIT
+
+        _temp_format = self.therm.get_temperature_format()
+        value = TEMP_CELSIUS if (_temp_format == 0) else TEMP_FAHRENHEIT
         _LOGGER.debug(f'temperature unit returning {value}')
         return value
 
     @property
     def hvac_mode(self) -> str:
-        """Return hvac operation ie. heat, cool mode.
-        Need to be one of HVAC_MODE_*.
-        """
-        
-        if (int(self.dcb[23]["value"]) == 1):
+        # stat has frost protect on/off and heat state on/off
+        # we map frost protect to hvac mode off
+        _run_mode=self.therm.get_run_mode()
+        _heat_state =self.therm.get_heat_state()
+        if _run_mode == 1:   #frost protect
             value = HVAC_MODE_OFF
-        elif (int(self.dcb[35]["value"]) == 0):
+        elif _heat_state == 0:  # not heating
             value = HVAC_MODE_AUTO
         else:
             value = HVAC_MODE_HEAT
@@ -163,27 +170,19 @@ class HeatmiserV3Thermostat(ClimateEntity):
         """Return the list of available hvac operation modes.
            Need to be a subset of HVAC_MODES.
         """
+        # tbd is this correct ? returning null lost !
         _LOGGER.debug(f'hvac modes called')
         return []
 
     @property
     def current_temperature(self):
         """Return the current temperature depending on sensor select"""
-        senselect = self.dcb[13]["value"]
-        if senselect in [0,3]:    # Built In sensor
-            index = 32
-        elif senselect in [1,4]:    # remote  air sensor
-            index = 28
-        else:
-            index = 30    # assume floor sensor
-
-        temperature = (self.dcb[index]["value"] * 256 + self.dcb[index +1]["value"])/10
-        _LOGGER.debug(f'Current temp returned {temperature}')
+        temperature = self.therm.get_current_temp()
+        _LOGGER.debug(f'Current temperature returned {temperature}')
         return (temperature)
 
     @property
     def target_temperature(self):
-        _LOGGER.debug(f'Get target temp')
         temperature = self.therm.get_target_temp()
         _LOGGER.debug(f'Target temp returned {temperature}')
         return temperature
@@ -192,25 +191,20 @@ class HeatmiserV3Thermostat(ClimateEntity):
         """Set new target temperature."""
         temperature = kwargs.get(ATTR_TEMPERATURE)
         _LOGGER.debug(f'Set target temp: {temperature}')
-        
+
         try:
             self._target_temperature = int(temperature)
             self.therm.set_target_temp(self._target_temperature)
         except ValueError as err:
-            _LOGGER.error (f'Error - Set Temperature exception {err} for {self._name}')
-         
+            _LOGGER.error(
+                f'Error - Set Temperature exception {err} for {self._name}')
 
     def update(self):
         """Get the latest data."""
         _LOGGER.debug(f'Update started for {self._name}')
-        
+
         try:
-            self.dcb = self.therm.read_dcb()
+            self.therm.read_dcb()
         except ValueError as err:
-            _LOGGER.error (f'Error - Update exception {err} for {self._name}')
-        
-        self._current_temperature = int(self.current_temperature)
-        self._target_temperature = int(self.target_temperature)
-        self._hvac_mode = self.hvac_mode
-        _LOGGER.debug(f'Update done- current T: {self._current_temperature}, target T: {self._target_temperature}, hvac mode: {self._hvac_mode}')
-       
+            _LOGGER.error(f'Error - Update exception {err} for {self._name}')
+        _LOGGER.debug(f'Update done')

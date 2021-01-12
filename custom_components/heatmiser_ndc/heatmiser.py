@@ -1,341 +1,296 @@
+"""
+    Heatmiser library to access Heatmiser thermostats (PRT-N) via an RS485 interface
+    Multiple stats may be connected to each UH1 wiring hub
+    library designed to be used by Home Assistant and other apps
+"""
 # NDC Dec 2020
-# Neil Trimboy 2011
+# from previous great work by Neil Trimboy 2011, and others
 
-#
-import sys
+
 import serial
-import yaml
 import logging
-from . import constants
-import pkg_resources
-config_yml = pkg_resources.resource_string(__name__, "config.yml")
+import asyncio
+import serial_asyncio
+
+# Heatmiser read / write codes
+FUNC_READ = 0
+FUNC_WRITE = 1
+
+# COMM SETTINGS
+COM_PORT = 6  # 1 less than com port, USB is 6=com7, ether is 9=10
+COM_BAUD = 4800
+COM_SIZE = serial.EIGHTBITS
+COM_PARITY = serial.PARITY_NONE
+COM_STOP = serial.STOPBITS_ONE
+COM_TIMEOUT = 0.8 # seconds
 
 _LOGGER = logging.getLogger(__name__)
 
-#
-# Believe this is known as CCITT (0xFFFF)
-# This is the CRC function converted directly from the Heatmiser C code
-# provided in their API
+class HM_UH1:
+    """ The Heatmiser UH1 interface that holds the serial
+    connection, and can have multiple thermostats
+    """
+
+    def __init__(self, ipaddress, port):
+        _LOGGER.info(f'Initialising interface {ipaddress} : {port}')
+        self.thermostats = {}
+        self._serport = serial.serial_for_url("socket://" + ipaddress + ":" + port)
+        # close port just in case its been left open from before
+        serport_response = self._serport.close()
+        _LOGGER.debug(f'SerialPortResponse: {serport_response}')
+        self._serport.baudrate = COM_BAUD
+        self._serport.bytesize = COM_SIZE
+        self._serport.parity = COM_PARITY
+        self._serport.stopbits = COM_STOP
+        self._serport.timeout = COM_TIMEOUT
+        self.status = False
+        self._open()
+
+    def _open(self):
+        if not self.status:
+            _LOGGER.debug("Opening serial port.")
+            self._serport.open()
+            self.status = True
+            _LOGGER.debug("Opened serial port OK")
+            return True
+        else:
+            _LOGGER.error("Attempting to access already open port")
+            return False
+
+    def registerThermostat(self, thermostat):
+        """Registers a thermostat with the UH1"""
+        try:
+            # check we have a heatmiser stat object
+            type(thermostat) == HeatmiserStat
+            if thermostat.address in self.thermostats.keys():
+                raise ValueError(f'Stat already present {thermostat.address}')
+            else:
+                self.thermostats[thermostat.address] = thermostat
+                _LOGGER.debug(f'Thermosta: {thermostat.address} registered')
+        except ValueError:
+            pass
+        except Exception as err:
+            _LOGGER.error(f'Not a HeatmiiserThermostat Object {err}')
+        return self._serport
 
 
 class CRC16:
-    """This is the CRC hashing mechanism used by the V3 protocol."""
-    LookupHigh = [
+    """CRC function (aka CCITT) mechanism used by the Heatmiser V3 protocol."""
+    LookupHi = [
         0x00, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70,
         0x81, 0x91, 0xa1, 0xb1, 0xc1, 0xd1, 0xe1, 0xf1
     ]
-    LookupLow = [
+    LookupLo = [
         0x00, 0x21, 0x42, 0x63, 0x84, 0xa5, 0xc6, 0xe7,
         0x08, 0x29, 0x4a, 0x6b, 0x8c, 0xad, 0xce, 0xef
     ]
 
     def __init__(self):
-        self.high = 0xff
-        self.low = 0xff
+        self.hi = 0xff
+        self.lo = 0xff
 
-    def extract_bits(self, val):
-        """Extras the 4 bits, XORS the message data, and does table lookups."""
-        # Step one, extract the Most significant 4 bits of the CRC register
-        thisval = self.high >> 4
-        # XOR in the Message Data into the extracted bits
+    def _extract_bits(self, val):
+        thisval = self.hi >> 4
         thisval = thisval ^ val
-        # Shift the CRC Register left 4 bits
-        self.high = (self.high << 4) | (self.low >> 4)
-        self.high = self.high & 0xff    # force char
-        self.low = self.low << 4
-        self.low = self.low & 0xff      # force char
+        self.hi = (self.hi << 4) | (self.lo >> 4)
+        self.hi = self.hi & 0xff    # force char
+        self.lo = self.lo << 4
+        self.lo = self.lo & 0xff      # force char
         # Do the table lookups and XOR the result into the CRC tables
-        self.high = self.high ^ self.LookupHigh[thisval]
-        self.high = self.high & 0xff    # force char
-        self.low = self.low ^ self.LookupLow[thisval]
-        self.low = self.low & 0xff      # force char
+        self.hi = self.hi ^ self.LookupHi[thisval]
+        self.hi = self.hi & 0xff    # force char
+        self.lo = self.lo ^ self.LookupLo[thisval]
+        self.lo = self.lo & 0xff      # force char
 
-    def update(self, val):
-        """Updates the CRC value using bitwise operations."""
-        self.extract_bits(val >> 4)    # High nibble first
-        self.extract_bits(val & 0x0f)   # Low nibble
+    def _update(self, val):
+        self._extract_bits(val >> 4)     # High nibble first
+        self._extract_bits(val & 0x0f)   # Low nibble
 
     def run(self, message):
-        """Calculates a CRC"""
         for value in message:
-            self.update(value)
-        return [self.low, self.high]
+            self._update(value)
+        return [self.lo, self.hi]
 
 
-class HeatmiserThermostat(object):
-    """Initialises a heatmiser thermostat, by taking an address and model."""
-
-    def __init__(self, address, model, uh1):
-        
-        _LOGGER.debug("Heatmiser Thermostat initialisation")
-        self.address = address
-        self.model = model
-        try:
-            self.config = yaml.safe_load(config_yml)[model]
-        except yaml.YAMLError as exc:
-            _LOGGER.error("The YAML file is invalid: %s", exc)
-        self.conn = uh1.registerThermostat(self)
-        self.dcb = ""
-        
-        # No need to read stat at this point, slows down initialisation
-        #self.read_dcb()
-
-    def _hm_form_message(self, stat, source, function, start, payload):
-        """Forms a message payload, excluding CRC"""
-
-        start_low = (start & 0xff)
-        start_high = (start >> 8) & 0xff
-        if function == constants.FUNC_READ:
-            payload_length = 0
-            length_low = 0xff
-            length_high = 0xff
-        else:
-            payload_length = len(payload)
-            length_low = (payload_length & 0xff)
-            length_high = (payload_length >> 8) & 0xff
-        msg = [
-            stat,
-            10 + payload_length,
-            source,
-            function,
-            start_low,
-            start_high,
-            length_low,
-            length_high
-        ]
-        if function == constants.FUNC_WRITE:
-            msg = msg + payload
-            type(msg)
-        return msg
-        
-
-    def _hm_form_message_crc(self, stat, source, function, start, payload):
-        """Forms a message payload, including CRC"""
-        data = self._hm_form_message(stat, source, function, start, payload)
-        crc = CRC16()
-        data = data + crc.run(data)
-        return data
-
-    def _hm_verify_message_crc_uk(self, stat, source, expectedFunction, datal):
-        """Verifies message appears legal"""
-        # expectedLength only used for read msgs as always 7 for write
-        # raises ValueError exception if message not valid
-        
-        _LOGGER.debug(f'Verifying message- source: {source}')
-        
-        checksum = datal[len(datal) - 2:]
-        rxmsg = datal[:len(datal) - 2]
-        crc = CRC16()   # Initialises the CRC
-        expectedchecksum = crc.run(rxmsg)
-        if expectedchecksum != checksum:
-            raise ValueError("Bad CRC")
-
-        dest_addr = datal[0]
-        frame_len_l = datal[1]
-        frame_len_h = datal[2]
-        frame_len = (frame_len_h << 8) | frame_len_l
-        source_addr = datal[3]
-        func_code = datal[4]
-
-        if (dest_addr != 129 and dest_addr != 160):
-            raise ValueError("dest_addr is ILLEGAL")
-
-        if dest_addr != stat:
-            raise ValueError("dest_addr is INCORRECT")
-
-        if (source_addr < 1 or source_addr > 32):
-            raise ValueError("source_addr is ILLEGAL")
-        
-        if source_addr != source:
-            raise ValueError("source addr is INCORRECT")
-
-        if func_code != constants.FUNC_WRITE and func_code != constants.FUNC_READ:
-            raise ValueError("Func Code is UNKNWON")
-
-        if func_code != expectedFunction:
-            raise ValueError("Func Code is UNEXPECTED")
-
-        if func_code == constants.FUNC_WRITE and frame_len != 7:
-            raise ValueError("Unexpected Write length")
-
-        # when function is FUNC_READ length might vary
-
-        if len(datal) != frame_len:
-            raise ValueError("response length MISMATCHES header")
+class HeatmiserStat:
+    """ Represents a heatmiser thermostat 
+    Provides methods to:
+       read all fields from the stat in raw state
+       get individual fields eg target temp, frost temp, status, heating,  temp format etc
+       set writable stat fields eg target temp, frost protect temp, floor max temp etc
+    """
     
-        # message appears OK
-        
+    def __init__(self, address, model, uh1):
+        _LOGGER.debug(f'HeatmiserStat init addr {address}')
+        self.address = address
+        self.dcb = []
+        self.conn = uh1.registerThermostat(self)  # register stat to ser i/f
+        _LOGGER.debug(f'Init done. Conn = {self.conn}')
 
-    def _hm_send_msg(self, message):
-        """This is the only interface to the serial connection."""
+    def _lohibytes(self, value):
+        # splits value into 2 bytes, returns lo, hi bytes
+        return value & 0xff, (value >> 8) & 0xff
+
+    def _verify(self, stat, exp_func, datal):
+        # verifies reply from stat by checking CRC and header fields
+        # raises ValueError exception if any fields invalid
+
+        _LOGGER.debug(f'Verifying {stat}')
+        length = len(datal)
+        if length < 3:
+            raise ValueError("No data read")
+        checksum = datal[length - 2:]
+        rxmsg = datal[:length - 2]
+        crc = CRC16()   # Initialises the CRC
+        if crc.run(rxmsg) != checksum:
+            raise ValueError(f'Bad CRC, length {length}')
+        dest = datal[0]
+        if (dest != 129 and dest != 160):
+            raise ValueError("dest is ILLEGAL")
+
+        source = datal[3]
+        if (source < 1 or source > 32 or source != stat):
+            raise ValueError(f'source is bad {source}')
+
+        func = datal[4]
+        frame_len = datal[2] * 256 + datal[1]
+        if func != FUNC_WRITE and func != FUNC_READ:
+            raise ValueError("Func Code is UNKNWON")
+        if func != exp_func:
+            raise ValueError("Func Code is UNEXPECTED")
+        if func == FUNC_WRITE and frame_len != 7:
+            raise ValueError("Unexpected Write length")
+        if length != frame_len:
+            raise ValueError("response length MISMATCHES header")
+
+        # message appears OK
+
+    def _send_msg(self, message):
+        # Adds CRC, then sends message to serial interface, & reads reply
+        # max read length = 75 in 5/2 mode, 159 in 7day mode ? TBD check these
+        # This is the only interface to the serial connection.
+
+        _LOGGER.debug(f'Send msg - length: {len(message)}')
+        crc = CRC16()
+        string = bytes(message + crc.run(message))  # add CRC
         try:
-            _LOGGER.debug(f'Sending to serial - length: {len(message)}')
-            serial_message = message
-            self.conn.write(serial_message)   # Write a string
+            self.conn.write(string)
         except serial.SerialTimeoutException:
             _LOGGER.error("Serial timeout on write")
-            
-        # Now wait for reply
-        byteread = self.conn.read(159)
-        # NB max return is 75 in 5/2 mode or 159 in 7day mode
-        datal = list(byteread)
+
+        datal = list(self.conn.read(159))
         _LOGGER.debug(f'Reply read, length {len(datal)}')
         return datal
 
-    def _hm_send_address(self, thermostat_id, address, state, readwrite):
-        
-        _LOGGER.debug(f'Sending - therm id {thermostat_id} addr {address}, state {state}, R/W {readwrite}')
-        
-        payload = [state]
-        msg = self._hm_form_message_crc(
-            thermostat_id,
-            129,
-            readwrite,
-            address,
-            payload
-        )
-        string = bytes(msg)
-        datal = self._hm_send_msg(string)           
-        self._hm_verify_message_crc_uk(129, thermostat_id, readwrite, datal)
-                
+    def _write_stat(self, stat, address, value):
+        # writes a single value to the stat at address in dcb
+        # tbd will need to change this to write comfort levels
+        # tbd currently length is always 1
+        _LOGGER.debug(
+            f'write stat - stat {stat} addr {address}, value {value}')
+        payload = [value]  # makes a list of 1 item
+        startlo, starthi = self._lohibytes(address)
+        lengthlo, lengthhi = self._lohibytes(len(payload))
+        msg = [stat, 10+len(payload), 129, 1,
+               startlo, starthi, lengthlo, lengthhi]
+        datal = self._send_msg(msg+payload)
+        self._verify(stat, 1, datal)
         return datal
-        
-    def _hm_read_address(self):
-        """Reads from the DCB and maps to yaml config file."""
-        _LOGGER.debug(f'hm read_address {self.address}')
-        response = self._hm_send_address(self.address, 0, 0, 0)
-        lookup = self.config['keys']
-        offset = self.config['offset']
-        keydata = {}
-        for i in lookup:
-            try:
-                kdata = lookup[i]
-                ddata = response[i + offset]
-                #special debug for stat no, target temp, and room temps
-                if i in [11,18,29,33]:
-                    _LOGGER.debug(f'hm read_address i, kdata, ddata  = {i} {kdata} {ddata}')
 
-                keydata[i] = {
-                    'label': kdata,
-                    'value': ddata
-                }
-            except IndexError:
-                raise ValueError (f'Index error at {i}')
-        
-        return keydata
+    # Methods to get or set thermostat attributes
+    # read_dcb used to read all data from stat
+    # get methods extract fields from internal stored values
+    # set methods write the single field to the stat
+    # ? need to do an update after calling set to update internal dcb
 
     def read_dcb(self):
+        """ Reads all data from stat by sending stad read message to serial i/f
+        reading reply and verifying
+        returns data as list after stripping out frame header and checksum
         """
-        Updates DCB by sending message to stat via serial i/f, and then reading reply from stat
-        Only use for non read-only operations
-        Use self.dcb for read-only operations.
-        """
-        _LOGGER.debug("hm read_dcb ")
-        self.dcb = self._hm_read_address()
+        
+        stat = self.address
+        _LOGGER.debug(f'read dcb for : {stat}')
+
+        # form standard read command to read all fields from stat
+        msg = [stat, 10, 129, 0, 0, 0, 0xff, 0xff]
+        datal = self._send_msg(msg)
+        self._verify(stat, 0, datal)
+        self.dcb = datal[9:len(datal)-2]  # strip off header & crc
         return self.dcb
 
     def get_frost_temp(self):
-        value = self._hm_read_address()[17]['value']
-        _LOGGER.debug(f'hm get frost temp {value}')
+        value = self.dcb[17]
+        _LOGGER.debug(f'get frost temp {value}')
         return value
 
     def get_target_temp(self):
-        #value = self._hm_read_address()[18]['value']
-        value = self.dcb[18]['value']
-        _LOGGER.debug(f'hm get target temp {value}')
-        return value
-
-    def get_floormax_temp(self):
-        value = self._hm_read_address()[19]['value']
-        _LOGGER.debug(f'hm get floormax temp {value}')
-        return value
-
-    def get_status(self):
-        value = self._hm_read_address()[21]['value']
-        _LOGGER.debug(f'hm get status {value}')
+        value = self.dcb[18]
+        _LOGGER.debug(f'get target temp {value}')
         return value
 
     def get_heating(self):
-        value = self._hm_read_address()[23]['value']
-        _LOGGER.debug(f'hm get heating {value}')
+        value = self.dcb[23]
+        _LOGGER.debug(f'get heating {value}')
         return value
 
     def get_thermostat_id(self):
-        value = self.dcb[11]['value']
-        _LOGGER.debug(f'hm get thermostat id {value}')
+        value = self.dcb[11]
+        _LOGGER.debug(f'get thermostat id {value}')
         return value
 
     def get_temperature_format(self):
-        value = self.dcb[5]['value']
-        _LOGGER.debug(f'hm get temp format {value}')
-        if value == 00:
-            return "C"
-        else:
-            return "F"
+        value = self.dcb[5]
+        _LOGGER.debug(f'get temp format {value}')
+        return value
 
     def get_sensor_selection(self):
-        sensor = self.dcb[13]['value']
-        _LOGGER.debug(f'hm get sensor select ={sensor}')
-        answers = {
-            0: "Built in air sensor",
-            1: "Remote air sensor",
-            2: "Floor sensor",
-            3: "Built in + floor",
-            4: "Remote + floor"
-        }
-        return answers[sensor]
+        sensor = self.dcb[13]
+        _LOGGER.debug(f'get sensor select ={sensor}')
+        return sensor
 
     def get_program_mode(self):
-        mode = self.dcb[16]['value']
-        _LOGGER.debug(f'hm get prog mode {mode}')
-        modes = {
-            0: "5/2 mode",
-            1: "7 day mode"
-        }
-        return modes[mode]
+        mode = self.dcb[16]
+        _LOGGER.debug(f'get prog mode {mode}')
+        return mode
 
-    #tbc why is this null?    
+    # tbc why is this null?
     def get_frost_protection(self):
         pass
 
-    # tbc - does this need to return 2 byte value
-    def get_floor_temp(self):
-        value = self.dcb[31]['value'] / 10
-        _LOGGER.debug(f'hm get floor temp {value}')
+    def get_current_temp(self):
+        # Home assistant climate entity only has 1 current temperature variable
+        # but the stat has floor sensor and remote or builtin air sensor
+        # this method returns the air sensor (builtin or remote) if present, otherwise floor sensor
+
+        senselect = self.dcb[13]
+        if senselect in [0, 3]:    # Built In sensor
+            index = 32
+        elif senselect in [1, 4]:  # remote  air sensor
+            index = 28
+        else:
+            index = 30    # assume floor sensor
+
+        value = (self.dcb[index] * 256 +
+                 self.dcb[index + 1])/10
+
+        _LOGGER.debug(f'get current temp {value}')
         return value
 
-    def get_sensor_error(self):
-        value = self.dcb[34]['value']
-        _LOGGER.debug(f'hm get sensor error {value}')
+    def get_run_mode(self):
+        value = self.dcb[23]  # 1 = frost protect, o = normal (heating)
+        _LOGGER.debug(f'get run mode {value}')
         return value
 
-    def get_current_state(self):
-        value = self.dcb[35]['value']
-        _LOGGER.debug(f'hm get current state {value}')
+    def get_heat_state(self):
+        value = self.dcb[35]  # 1 = heating, o = not
+        _LOGGER.debug(f'get heat state {value}')
         return value
 
-    def set_frost_protect_mode(self, onoff):
-        _LOGGER.debug(f'hm set frost protect mode {onoff}')
-        self._hm_send_address(self.address, 23, onoff, 1)
+    def set_target_temp(self, temp):
+        _LOGGER.debug(f'set target temp {temp}')
+        if 35 < temp < 5:
+            raise ValueError(f'Attempt to set bad target temp {temp}')
+        self._write_stat(self.address, 18, temp)
         return True
 
-    def set_frost_protect_temp(self, frost_temp):
-        _LOGGER.debug(f'Set frost temp {frost_temp}')
-        if 17 < frost_temp < 7:
-            raise ValueError(f'Attempt to set bad frost tempe {frost_temp}')
-        self._hm_send_address(self.address, 17, frost_temp, 1)
-        return True
-
-    def set_target_temp(self, temperature):
-        _LOGGER.debug(f'hm set target temp {temperature}')
-        if 35 < temperature < 5:
-            raise ValueError (f'Attempt to set bad target temp {temperature}')
-        self._hm_send_address(self.address, 18, temperature, 1)
-        return True
-
-    def set_floormax_temp(self, floor_max):
-        _LOGGER.debug(f'hm set floormax temp {floor_max}')
-        if 45 < floor_max < 20:
-            raise ValueError(f'Attempt to set bad floormax temp {floor_max}')
-        self._hm_send_address(self.address, 19, floor_max, 1)
-        return True
