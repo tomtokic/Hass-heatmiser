@@ -43,19 +43,9 @@ class HM_UH1:
         self._serport.parity = COM_PARITY
         self._serport.stopbits = COM_STOP
         self._serport.timeout = COM_TIMEOUT
-        self.status = False
-        self._open()
+        self._serport.open()
+        _LOGGER.debug("Serial port opened OK")
 
-    def _open(self):
-        if not self.status:
-            _LOGGER.debug("Opening serial port.")
-            self._serport.open()
-            self.status = True
-            _LOGGER.debug("Opened serial port OK")
-            return True
-        else:
-            _LOGGER.error("Attempting to access already open port")
-            return False
 
     def registerThermostat(self, thermostat):
         """Registers a thermostat with the UH1"""
@@ -123,7 +113,9 @@ class HeatmiserStat:
     def __init__(self, address, model, uh1):
         _LOGGER.debug(f'HeatmiserStat init addr {address}')
         self.address = address
-        self.dcb = []
+        #Allocate space and initialise dcb to 0. Necessary to avoid crash, if first read from stat fails 
+        self.dcb = [0] * 160
+
         self.conn = uh1.registerThermostat(self)  # register stat to ser i/f
         _LOGGER.debug(f'Init done. Conn = {self.conn}')
 
@@ -219,6 +211,7 @@ class HeatmiserStat:
         self.dcb = datal[9:len(datal)-2]  # strip off header & crc
         return self.dcb
 
+    #get_frost_temp is unused at present
     def get_frost_temp(self):
         value = self.dcb[17]
         _LOGGER.debug(f'get frost temp {value}')
@@ -227,11 +220,6 @@ class HeatmiserStat:
     def get_target_temp(self):
         value = self.dcb[18]
         _LOGGER.debug(f'get target temp {value}')
-        return value
-
-    def get_heating(self):
-        value = self.dcb[23]
-        _LOGGER.debug(f'get heating {value}')
         return value
 
     def get_thermostat_id(self):
@@ -253,10 +241,6 @@ class HeatmiserStat:
         mode = self.dcb[16]
         _LOGGER.debug(f'get prog mode {mode}')
         return mode
-
-    # tbc why is this null?
-    def get_frost_protection(self):
-        pass
 
     def get_current_temp(self):
         # Home assistant climate entity only has 1 current temperature variable
@@ -294,3 +278,10 @@ class HeatmiserStat:
         self._write_stat(self.address, 18, temp)
         return True
 
+    def set_run_mode(self, state):
+        #sets run mode to 0 =normal, or 1 = frost protect
+        _LOGGER.debug(f'set run mode {state}')
+        if (state != 0 and state != 1):
+            raise ValueError(f'Attempt to set bad run mode {state}')
+        self._write_stat(self.address, 23, state)
+        return True
