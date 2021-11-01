@@ -171,8 +171,9 @@ class HMV3Stat(ClimateEntity):
         """Return the list of available hvac operation modes"""
         # Need to be a subset of HVAC_MODES.
         
-        _LOGGER.debug(f'hvac modes called')
-        return [HVAC_MODE_HEAT, HVAC_MODE_OFF ]
+        result = [HVAC_MODE_HEAT, HVAC_MODE_OFF, HVAC_MODE_AUTO]
+        _LOGGER.debug(f'hvac modes returning {result}')
+        return result
 
     @property
     def current_temperature(self):
