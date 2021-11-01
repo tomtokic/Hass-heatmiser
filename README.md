@@ -7,6 +7,23 @@ To use this custom component:
   2. Upload the files `climate.py`, `heatmiser.py`, `manifest.json` and `_init_.py` to the new `config/custom_components/heatmiser_ndc` folder
   3. and then add the following (edited for your setup) to your configuration.yaml:
 
+
+
+Notes
+
+My own heatmiser system has 15 stats connected via a single  ATC_1000 RS485 adaptor
+
+The timeout is currently set to 0.8 seconds, so it takes c12 seconds to update all stats. This works fine on my own system, but if you have lots of CRC errors reported in the log, then it may be worth increasing this a little to say 1 second or more.
+
+Hass includes the first update as part of initialisation, so with this many stats, it will take longer than 10 seconds, so a warning is to be expected, along the lines of 
+Setup of climate platform heatmiser_ndc is taking over 10 seconds.
+
+Hass initiates an update to read the stat values after scan_interval seconds. The shorter this interval, the more quickly Hass will detect changes in temperature or heating mode. The fewer stats you have, the smaller this interval can be.
+
+This version has been derived from the original Heatmiser component and the HeatmiserV3 library. The library has been incorporated into the component to add logging and fix a few issues
+
+
+Example configuration.yaml
 ```
  climate:
   - platform: heatmiser_ndc
@@ -56,3 +73,4 @@ service: logger.set_level
 data:
   custom_components.heatmiser_ndc: warning
 ```
+
