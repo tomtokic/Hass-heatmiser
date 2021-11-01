@@ -84,8 +84,7 @@ class HMV3Stat(ClimateEntity):
     """Representation of a HeatmiserV3 thermostat."""
 
     # these functions are called by Hass code
-    # logging does not show any calls made to following:
-    #    turn_on, turn_off, set_hvac_mode
+    #  The methods  - turn_on, turn_off, set_hvac_mode only appear to be called by Service calls/automations
 
     def __init__(self, therm, device, uh1):
         """Initialize the thermostat."""
@@ -116,6 +115,7 @@ class HMV3Stat(ClimateEntity):
 
     @property
     def hvac_mode(self) -> str:
+        # Returns Hvac mode - Off / Auto / Heat
         # stat has frost protect on/off and heat state on/off
         # we map frost protect to hvac mode off
         _run_mode=self.therm.get_run_mode()
@@ -130,16 +130,17 @@ class HMV3Stat(ClimateEntity):
         return value
 
     def set_hvac_mode(self, hvac_mode):
+        # If Off , set stat to frost protect mode
+        # If on, set stat to normal
         _LOGGER.debug(f'set hvac mode to {hvac_mode}')
         if hvac_mode == HVAC_MODE_OFF:
-            self.therm.set_frost_protect_mode(1)
+            self.therm.set_run_mode(1)
         else:
-            self.therm.set_frost_protect_mode(0)
+            self.therm.set_run_mode(0)
 
     def turn_off(self):
-        """Turn off the zone"""
+        """Turn off the stat"""
         _LOGGER.debug(f'turn off called')
-        self.therm.set_frost_protect_temp(7)
         self.set_hvac_mode(HVAC_MODE_OFF)
 
     def turn_on(self):
@@ -167,12 +168,12 @@ class HMV3Stat(ClimateEntity):
 
     @property
     def hvac_modes(self) -> List[str]:
-        """Return the list of available hvac operation modes.
-           Need to be a subset of HVAC_MODES.
-        """
-        # tbd is this correct ? returning null lost !
-        _LOGGER.debug(f'hvac modes called')
-        return []
+        """Return the list of available hvac operation modes"""
+        # Need to be a subset of HVAC_MODES.
+        
+        result = [HVAC_MODE_HEAT, HVAC_MODE_OFF, HVAC_MODE_AUTO]
+        _LOGGER.debug(f'hvac modes returning {result}')
+        return result
 
     @property
     def current_temperature(self):
