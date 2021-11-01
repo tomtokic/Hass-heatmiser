@@ -37,10 +37,10 @@ Hass includes the first update as part of initialisation, so with this many stat
 The configuration parameter scan_interval determines how frequently Hass reads the stat values after scan_interval seconds. The shorter this interval, the more quickly Hass will detect changes in temperature or heating mode. The fewer stats you have, the smaller this interval can be.
 
 ### Hvac modes
-The component now supports HVAC MODES and implements the climate services Turn on, Turn off & Set Hvac Mode
-Turn off sets the stat into frost protect mode, Turn on sets it to normal (ie heating if actual temp < target temp))
-Set Hvac mode on or off is the same as turn on / turn off
-The stat can be turned on/off in the UI, or by calling the relevant services from developer tools
+The component now supports 3 HVAC MODES - "Auto", "Heat" and "Off" and implements the climate services Turn on, Turn off & Set Hvac Mode. 
+Turn off sets the stat into frost protect mode, Turn on sets it to normal (ie heating if actual temp < target temp)). 
+Set Hvac mode on or off is the same as turn on / turn off.
+The modes can be controlled from the UI, or by calling the relevant services from developer tools. Setting mode to "Auto" or "Heat" has the same effect - the resulting mode in the stat will depend on the current temp.
 
 ### Logging
 The component logs lots of events at debug, error, info & warning levels. Logging levels can be controlled by including something like the following in the configuration.yaml file
