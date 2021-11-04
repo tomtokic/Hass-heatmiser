@@ -19,6 +19,7 @@ from homeassistant.components.climate.const import (
     HVAC_MODE_OFF,
     HVAC_MODE_AUTO,
     SUPPORT_TARGET_TEMPERATURE,
+    SUPPORT_TARGET_HUMIDITY
 )
 from homeassistant.const import (
     ATTR_TEMPERATURE,
@@ -83,9 +84,6 @@ def setup_platform(hass, config, add_entities, discovery_info=None):
 class HMV3Stat(ClimateEntity):
     """Representation of a HeatmiserV3 thermostat."""
 
-    # these functions are called by Hass code
-    #  The methods  - turn_on, turn_off, set_hvac_mode only appear to be called by Service calls/automations
-
     def __init__(self, therm, device, uh1):
         """Initialize the thermostat."""
 
@@ -96,9 +94,9 @@ class HMV3Stat(ClimateEntity):
 
     @property
     def supported_features(self):
-        _LOGGER.debug(
-            f'supported features returning {SUPPORT_TARGET_TEMPERATURE}')
-        return SUPPORT_TARGET_TEMPERATURE
+        result = SUPPORT_TARGET_TEMPERATURE + SUPPORT_TARGET_HUMIDITY
+        _LOGGER.debug(f'supported features returning {result}')
+        return result
 
     @property
     def name(self):
@@ -131,7 +129,7 @@ class HMV3Stat(ClimateEntity):
 
     def set_hvac_mode(self, hvac_mode):
         # If Off , set stat to frost protect mode
-        # If on, set stat to normal
+        # If Heat or Auto, set stat to normal
         _LOGGER.debug(f'set hvac mode to {hvac_mode}')
         if hvac_mode == HVAC_MODE_OFF:
             self.therm.set_run_mode(1)
@@ -178,15 +176,42 @@ class HMV3Stat(ClimateEntity):
     @property
     def current_temperature(self):
         """Return the current temperature depending on sensor select"""
-        temperature = self.therm.get_current_temp()
-        _LOGGER.debug(f'Current temperature returned {temperature}')
-        return (temperature)
+        temp = self.therm.get_current_temp()
+        _LOGGER.debug(f'Current temperature returned {temp}')
+        return (temp)
 
     @property
     def target_temperature(self):
-        temperature = self.therm.get_target_temp()
-        _LOGGER.debug(f'Target temp returned {temperature}')
-        return temperature
+        temp = self.therm.get_target_temp()
+        _LOGGER.debug(f'Target temp returned {temp}')
+        return temp
+
+    @property
+    def min_humidity(self):
+        """Return the minimum humidity."""
+        _LOGGER.debug(f'min humidity returning 7')
+        return 7
+
+    @property
+    def max_humidity(self):
+        """Return the maximum humidity."""
+        _LOGGER.debug(f'max humidity returning 17')
+        return 17
+
+    @property
+    def current_humidity(self):
+        """Return the current humidity."""
+        # same as target humidity
+        temp = self.therm.get_frost_temp()
+        _LOGGER.debug(f'Current humidity returned {temp}')
+        return temp
+
+    @property
+    def target_humidity(self):
+        """Return the target humidity """
+        temp = self.therm.get_frost_temp()
+        _LOGGER.debug(f'Target humidity returned {temp}')
+        return temp
 
     def set_temperature(self, **kwargs):
         """Set new target temperature."""
@@ -200,6 +225,12 @@ class HMV3Stat(ClimateEntity):
             _LOGGER.error(
                 f'Error - Set Temperature exception {err} for {self._name}')
 
+    def set_humidity(self, humidity):
+        """Set new target humidity."""
+        _hum = int(humidity) 
+        _LOGGER.debug(f'set humidity to {_hum}')
+        self.therm.set_frost_temp(_hum)
+        
     def update(self):
         """Get the latest data."""
         _LOGGER.debug(f'Update started for {self._name}')

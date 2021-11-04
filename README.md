@@ -59,6 +59,9 @@ Turn off sets the stat into frost protect mode, Turn on sets it to normal (ie he
 Set Hvac mode on or off is the same as turn on / turn off.
 The modes can be controlled from the UI, or by calling the relevant services from developer tools. Setting mode to "Auto" or "Heat" has the same effect - the resulting mode in the stat will depend on the current temp.
 
+### Frost Protect temp
+The standard climate componet supports a humidity level (which the heatmiser stat does not). This component now allows the frost protect temp to be read and modified via the humidity level. It accepts values in the range 7 to 17 as per the PRT stat.
+
 ### Logging
 The component logs lots of events at debug, error, info & warning levels. Logging levels can be controlled by including something like the following in the configuration.yaml file
 ```
