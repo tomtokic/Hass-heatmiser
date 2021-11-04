@@ -8,21 +8,6 @@ To use this custom component:
   3. and then add the following (edited for your setup) to your configuration.yaml:
 
 
-
-Notes
-
-My own heatmiser system has 15 stats connected via a single  ATC_1000 RS485 adaptor
-
-The timeout is currently set to 0.8 seconds, so it takes c12 seconds to update all stats. This works fine on my own system, but if you have lots of CRC errors reported in the log, then it may be worth increasing this a little to say 1 second or more.
-
-Hass includes the first update as part of initialisation, so with this many stats, it will take longer than 10 seconds, so a warning is to be expected, along the lines of 
-Setup of climate platform heatmiser_ndc is taking over 10 seconds.
-
-Hass initiates an update to read the stat values after scan_interval seconds. The shorter this interval, the more quickly Hass will detect changes in temperature or heating mode. The fewer stats you have, the smaller this interval can be.
-
-This version has been derived from the original Heatmiser component and the HeatmiserV3 library. The library has been incorporated into the component to add logging and fix a few issues
-
-
 Example configuration.yaml
 ```
  climate:
@@ -60,7 +45,7 @@ Set Hvac mode on or off is the same as turn on / turn off.
 The modes can be controlled from the UI, or by calling the relevant services from developer tools. Setting mode to "Auto" or "Heat" has the same effect - the resulting mode in the stat will depend on the current temp.
 
 ### Frost Protect temp
-The standard climate componet supports a humidity level (which the heatmiser stat does not). This component now allows the frost protect temp to be read and modified via the humidity level. It accepts values in the range 7 to 17 as per the PRT stat.
+The standard climate componet supports a humidity level (while the heatmiser stat does not). So the code now allows the frost protect temp to be read and modified via the humidity level. It accepts values in the range 7 to 17 as per the PRT stat.
 
 ### Logging
 The component logs lots of events at debug, error, info & warning levels. Logging levels can be controlled by including something like the following in the configuration.yaml file
