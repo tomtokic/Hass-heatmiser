@@ -105,7 +105,8 @@ class HMV3Stat(ClimateEntity):
 
     @property
     def unique_id(self):
-        _id = f"Heatmiser Prt {self._name}"
+        _stat = self.therm.get_thermostat_id()
+        _id = f"Heatmiser Prt {_stat}"
         _LOGGER.debug(f'unique_id returning {_id}')
         return _id
         

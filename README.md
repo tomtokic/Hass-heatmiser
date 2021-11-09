@@ -55,7 +55,18 @@ logger:
   logs:
     custom_components.heatmiser_ndc: debug
 ```
-Logging levels can also be controlled on the fly using the logger.set_level service in Developer Tools in the UI in Yaml mode with 
+
+Logging can also be controlled at the module level within the component
+```
+logger:
+  default: warning
+  logs:
+    custom_components.heatmiser_ndc.climate: debug
+    custom_components.heatmiser_ndc.heatmiser: info
+   
+```
+
+Logging can also be controlled on the fly using the logger.set_level service in Developer Tools in the UI in Yaml mode with 
 ```
 service: logger.set_level
 data:

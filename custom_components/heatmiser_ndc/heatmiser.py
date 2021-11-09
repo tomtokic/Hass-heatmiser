@@ -175,6 +175,7 @@ class HeatmiserStat:
 
         datal = list(self.conn.read(159))
         _LOGGER.debug(f'Reply read, length {len(datal)}')
+        _LOGGER.debug(f'Data= {datal}')
         return datal
 
     def _write_stat(self, stat, address, value):
