@@ -5,12 +5,15 @@
 """
 # NDC Dec 2020
 # from previous great work by Neil Trimboy 2011, and others
+# Oct 2021 Sort out HVAC modes
+# Nov 2021 supprort humidity as proxy for frost protect
 
 
 import serial
 import logging
 import asyncio
 import serial_asyncio
+import time
 
 # Heatmiser read / write codes
 FUNC_READ = 0
@@ -172,14 +175,13 @@ class HeatmiserStat:
 
         datal = list(self.conn.read(159))
         _LOGGER.debug(f'Reply read, length {len(datal)}')
+        _LOGGER.debug(f'Data= {datal}')
         return datal
 
     def _write_stat(self, stat, address, value):
         # writes a single value to the stat at address in dcb
-        # tbd will need to change this to write comfort levels
-        # tbd currently length is always 1
-        _LOGGER.debug(
-            f'write stat - stat {stat} addr {address}, value {value}')
+
+        _LOGGER.debug(f'write stat no, addr, value = {stat}  {address}  {value}')
         payload = [value]  # makes a list of 1 item
         startlo, starthi = self._lohibytes(address)
         lengthlo, lengthhi = self._lohibytes(len(payload))
@@ -187,13 +189,19 @@ class HeatmiserStat:
                startlo, starthi, lengthlo, lengthhi]
         datal = self._send_msg(msg+payload)
         self._verify(stat, 1, datal)
+        _LOGGER.debug(f'write stat reply = {datal}')
+
+        # try a little sleep to ensure stat returns proper value on next update
+        # this should be OK for rest of Hass, as this runs in sync worker thread
+        time.sleep(1.0)
+
         return datal
 
     # Methods to get or set thermostat attributes
     # read_dcb used to read all data from stat
     # get methods extract fields from internal stored values
     # set methods write the single field to the stat
-    # ? need to do an update after calling set to update internal dcb
+    # After calls of set methods, HA itself calls update to update internal dcb
 
     def read_dcb(self):
         """ Reads all data from stat by sending stad read message to serial i/f
@@ -211,7 +219,6 @@ class HeatmiserStat:
         self.dcb = datal[9:len(datal)-2]  # strip off header & crc
         return self.dcb
 
-    #get_frost_temp is unused at present
     def get_frost_temp(self):
         value = self.dcb[17]
         _LOGGER.debug(f'get frost temp {value}')
@@ -278,6 +285,13 @@ class HeatmiserStat:
         self._write_stat(self.address, 18, temp)
         return True
 
+    def set_frost_temp(self, temp):
+        _LOGGER.debug(f'set frost temp {temp}')
+        if 17 < temp < 7:
+            raise ValueError(f'Attempt to set bad frost temp {temp}')
+        self._write_stat(self.address, 17, temp)
+        return True
+
     def set_run_mode(self, state):
         #sets run mode to 0 =normal, or 1 = frost protect
         _LOGGER.debug(f'set run mode {state}')
@@ -285,3 +299,5 @@ class HeatmiserStat:
             raise ValueError(f'Attempt to set bad run mode {state}')
         self._write_stat(self.address, 23, state)
         return True
+
+    
